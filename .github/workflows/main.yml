@@ -1,0 +1,5 @@
+            - name: Solidity Security checker
+  # You may pin to the exact commit or the version.
+  # uses: zerbinidamata/HephaestusSolidityGuard@8f00fa623c3e26f500d5e70bf503837e68b4fbd3
+  uses: zerbinidamata/HephaestusSolidityGuard@v0.0.2
+          
