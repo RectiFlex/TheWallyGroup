@@ -1,5 +1,3 @@
-Below is a corrected GitHub-compatible version of the README. The content after the WallyToken code example is no longer stuck inside a snippet. Notice how we properly close the code fence with three backticks before starting the subsequent sections.
-
 # Wally Token Ecosystem
 
 Welcome to the **Wally** token repository!  
