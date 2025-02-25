@@ -1,28 +1,34 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/* ---------------------------------
+ * Custom Errors
+ * --------------------------------- */
+error VestingRevokedAlready();
+error InvalidAddress();
+error CliffGreaterThanDuration();
+error NotAuthorized();
+error NothingToRelease();
+
 /**
  * @title WallyVesting
- * @dev Token vesting with cliff + linear release. Admin (DAO) can revoke.
- *
- * - If revoked, vested tokens remain claimable; unvested tokens return to admin.
- * - The beneficiary calls `release()` to get vested tokens.
+ * @dev Token vesting with cliff + linear release. Admin can revoke.
  */
 contract WallyVesting is AccessControl {
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 private constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
-    IERC20 public immutable token;      // The Wally token
-    address public immutable beneficiary;
+    IERC20 private immutable token;      
+    address private immutable beneficiary;
 
-    uint256 public immutable cliff;     // cliff time
-    uint256 public immutable start;     // start time
-    uint256 public immutable duration;  // total vesting duration
+    uint256 private immutable cliff;     
+    uint256 private immutable start;     
+    uint256 private immutable duration;  
 
-    uint256 public released;
-    bool public revoked;
+    uint256 private released;
+    bool private revoked;
 
     event TokensReleased(uint256 amount);
     event VestingRevoked();
@@ -34,11 +40,11 @@ contract WallyVesting is AccessControl {
         uint256 _cliffDuration,
         uint256 _duration,
         address _admin
-    ) {
-        require(_token != address(0), "Invalid token");
-        require(_beneficiary != address(0), "Invalid beneficiary");
-        require(_admin != address(0), "Invalid admin");
-        require(_cliffDuration <= _duration, "Cliff > duration");
+    ) payable {
+        if (_token == address(0)) revert InvalidAddress();
+        if (_beneficiary == address(0)) revert InvalidAddress();
+        if (_admin == address(0)) revert InvalidAddress();
+        if (_cliffDuration > _duration) revert CliffGreaterThanDuration();
 
         _grantRole(ADMIN_ROLE, _admin);
 
@@ -49,59 +55,72 @@ contract WallyVesting is AccessControl {
         duration = _duration;
     }
 
+    modifier onlyAuthorized() {
+        if (!hasRole(ADMIN_ROLE, msg.sender)) revert NotAuthorized();
+        _;
+    }
+
     /**
      * @dev Release vested tokens to beneficiary.
      */
-    function release() external {
-        require(!revoked, "Vesting revoked");
+    function release() external onlyAuthorized {
+        if (revoked) revert VestingRevokedAlready();
         uint256 unreleased = releasableAmount();
-        require(unreleased > 0, "Nothing to release");
+        if (unreleased == 0) revert NothingToRelease();
 
-        released += unreleased;
-        token.transfer(beneficiary, unreleased);
+        released = released + unreleased;
+
+        bool success = token.transfer(beneficiary, unreleased);
+        require(success, "Transfer fail");
 
         emit TokensReleased(unreleased);
     }
 
     /**
-     * @dev Allows admin to revoke vesting. Already-vested remain claimable; unvested returned to admin.
+     * @dev Allows admin to revoke vesting. Already-vested remain claimable; unvested => admin.
      */
     function revoke() external onlyRole(ADMIN_ROLE) {
-        require(!revoked, "Already revoked");
+        if (revoked) revert VestingRevokedAlready();
         revoked = true;
 
         uint256 balance = token.balanceOf(address(this));
         uint256 unreleased = releasableAmount();
-        uint256 refund = balance - unreleased;
+        uint256 refund = (balance > unreleased) ? (balance - unreleased) : 0;
 
-        if (refund > 0) {
-            token.transfer(msg.sender, refund);
+        if (refund != 0) {
+            bool success = token.transfer(msg.sender, refund);
+            require(success, "Refund fail");
         }
         emit VestingRevoked();
     }
 
-    /**
-     * @dev Calculates how many tokens can be released right now.
-     */
     function releasableAmount() public view returns (uint256) {
         return vestedAmount() - released;
     }
 
-    /**
-     * @dev Calculates total vested tokens at the current time.
-     */
     function vestedAmount() public view returns (uint256) {
         uint256 totalCurrent = token.balanceOf(address(this));
-        uint256 total = totalCurrent + released;
+        uint256 totalAssigned = totalCurrent + released;
 
         if (block.timestamp < cliff) {
             return 0;
         } else if (block.timestamp >= (start + duration) || revoked) {
-            return total;
+            return totalAssigned;
         } else {
-            // Linear vesting from start -> start + duration
-            uint256 vested = (total * (block.timestamp - start)) / duration;
+            uint256 timeSoFar = block.timestamp - start;
+            uint256 vested = (totalAssigned * timeSoFar) / duration;
             return vested;
         }
+    }
+
+    // Optional getters
+    function isRevoked() external view returns (bool) {
+        return revoked;
+    }
+    function totalReleased() external view returns (uint256) {
+        return released;
+    }
+    function getBeneficiary() external view returns (address) {
+        return beneficiary;
     }
 }

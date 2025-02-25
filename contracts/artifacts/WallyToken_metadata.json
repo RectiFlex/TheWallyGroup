@@ -13,7 +13,7 @@
 						"type": "address"
 					}
 				],
-				"stateMutability": "nonpayable",
+				"stateMutability": "payable",
 				"type": "constructor"
 			},
 			{
@@ -35,6 +35,11 @@
 					}
 				],
 				"name": "AccessControlUnauthorizedAccount",
+				"type": "error"
+			},
+			{
+				"inputs": [],
+				"name": "ApproveNonZero",
 				"type": "error"
 			},
 			{
@@ -152,25 +157,6 @@
 				"anonymous": false,
 				"inputs": [
 					{
-						"indexed": true,
-						"internalType": "address",
-						"name": "account",
-						"type": "address"
-					},
-					{
-						"indexed": false,
-						"internalType": "bool",
-						"name": "isBlacklisted",
-						"type": "bool"
-					}
-				],
-				"name": "Blacklisted",
-				"type": "event"
-			},
-			{
-				"anonymous": false,
-				"inputs": [
-					{
 						"indexed": false,
 						"internalType": "bool",
 						"name": "enabled",
@@ -179,7 +165,7 @@
 					{
 						"indexed": false,
 						"internalType": "uint256",
-						"name": "cooldownTime",
+						"name": "timeSeconds",
 						"type": "uint256"
 					}
 				],
@@ -286,11 +272,36 @@
 					{
 						"indexed": false,
 						"internalType": "uint256",
-						"name": "snipeBlocks",
+						"name": "timeSeconds",
 						"type": "uint256"
 					}
 				],
 				"name": "SniperProtectionUpdated",
+				"type": "event"
+			},
+			{
+				"anonymous": false,
+				"inputs": [
+					{
+						"indexed": true,
+						"internalType": "address",
+						"name": "token",
+						"type": "address"
+					},
+					{
+						"indexed": false,
+						"internalType": "uint256",
+						"name": "amount",
+						"type": "uint256"
+					},
+					{
+						"indexed": true,
+						"internalType": "address",
+						"name": "to",
+						"type": "address"
+					}
+				],
+				"name": "TokensRescued",
 				"type": "event"
 			},
 			{
@@ -329,6 +340,25 @@
 					}
 				],
 				"name": "Transfer",
+				"type": "event"
+			},
+			{
+				"anonymous": false,
+				"inputs": [
+					{
+						"indexed": true,
+						"internalType": "address",
+						"name": "user",
+						"type": "address"
+					},
+					{
+						"indexed": true,
+						"internalType": "bool",
+						"name": "isBlacklisted",
+						"type": "bool"
+					}
+				],
+				"name": "UserBlacklisted",
 				"type": "event"
 			},
 			{
@@ -378,19 +408,6 @@
 						"internalType": "bytes32",
 						"name": "",
 						"type": "bytes32"
-					}
-				],
-				"stateMutability": "view",
-				"type": "function"
-			},
-			{
-				"inputs": [],
-				"name": "INITIAL_SUPPLY",
-				"outputs": [
-					{
-						"internalType": "uint256",
-						"name": "",
-						"type": "uint256"
 					}
 				],
 				"stateMutability": "view",
@@ -491,7 +508,7 @@
 					},
 					{
 						"internalType": "uint256",
-						"name": "value",
+						"name": "amount",
 						"type": "uint256"
 					}
 				],
@@ -520,25 +537,6 @@
 						"internalType": "uint256",
 						"name": "",
 						"type": "uint256"
-					}
-				],
-				"stateMutability": "view",
-				"type": "function"
-			},
-			{
-				"inputs": [
-					{
-						"internalType": "address",
-						"name": "",
-						"type": "address"
-					}
-				],
-				"name": "blacklist",
-				"outputs": [
-					{
-						"internalType": "bool",
-						"name": "",
-						"type": "bool"
 					}
 				],
 				"stateMutability": "view",
@@ -661,16 +659,16 @@
 				"inputs": [
 					{
 						"internalType": "address",
-						"name": "",
+						"name": "user",
 						"type": "address"
 					}
 				],
-				"name": "lastTxTimestamp",
+				"name": "isBlacklisted",
 				"outputs": [
 					{
-						"internalType": "uint256",
+						"internalType": "bool",
 						"name": "",
-						"type": "uint256"
+						"type": "bool"
 					}
 				],
 				"stateMutability": "view",
@@ -678,7 +676,7 @@
 			},
 			{
 				"inputs": [],
-				"name": "launchBlock",
+				"name": "launchTimestamp",
 				"outputs": [
 					{
 						"internalType": "uint256",
@@ -814,7 +812,7 @@
 				"inputs": [
 					{
 						"internalType": "address",
-						"name": "account",
+						"name": "user",
 						"type": "address"
 					},
 					{
@@ -837,7 +835,7 @@
 					},
 					{
 						"internalType": "uint256",
-						"name": "_cooldownTime",
+						"name": "_time",
 						"type": "uint256"
 					}
 				],
@@ -850,7 +848,7 @@
 				"inputs": [
 					{
 						"internalType": "uint256",
-						"name": "_maxTxAmount",
+						"name": "_maxTx",
 						"type": "uint256"
 					}
 				],
@@ -868,7 +866,7 @@
 					},
 					{
 						"internalType": "uint256",
-						"name": "_snipeBlocks",
+						"name": "_seconds",
 						"type": "uint256"
 					}
 				],
@@ -881,7 +879,7 @@
 				"inputs": [
 					{
 						"internalType": "bool",
-						"name": "_enabled",
+						"name": "enabled",
 						"type": "bool"
 					}
 				],
@@ -892,7 +890,7 @@
 			},
 			{
 				"inputs": [],
-				"name": "snipeBlocks",
+				"name": "snipeTime",
 				"outputs": [
 					{
 						"internalType": "uint256",
@@ -1059,7 +1057,6 @@
 			}
 		],
 		"devdoc": {
-			"details": "IMPORTANT: The DAO address must be a **secure** address (multi-sig or official DAO).",
 			"errors": {
 				"AccessControlBadConfirmation()": [
 					{
@@ -1143,22 +1140,19 @@
 			},
 			"kind": "dev",
 			"methods": {
-				"addLiquidityETH(address,uint256,uint256,uint256,uint256)": {
-					"details": "Add liquidity (TWG / ETH) on Uniswap. Must transfer `tokenAmountIn` to      this contract first, or do it in a two-transaction flow from a front-end."
-				},
 				"allowance(address,address)": {
 					"details": "See {IERC20-allowance}."
 				},
 				"approve(address,uint256)": {
-					"details": "See {IERC20-approve}. NOTE: If `value` is the maximum `uint256`, the allowance is not updated on `transferFrom`. This is semantically equivalent to an infinite approval. Requirements: - `spender` cannot be the zero address."
+					"details": "(1) Override approve to mitigate front-running:      require the current allowance is 0 or the new allowance is 0      to prevent the \"double-spend\" front-running scenario."
 				},
 				"balanceOf(address)": {
 					"details": "See {IERC20-balanceOf}."
 				},
 				"constructor": {
-					"details": "Constructor  1) Mints the entire supply to the deployer (msg.sender).  2) Sets up roles so that only the DAO address has ADMIN_ROLE.  3) Creates a Uniswap V2 pair for (TWG / WETH).  4) Leaves the deployer with NO admin privileges by default, fulfilling the requirement      that the DAO is the sole admin from the start. ",
+					"details": "(14) Mark constructor payable for tiny gas optimization (optional). 1) Mints entire supply to the deployer 2) Grants the DAO `ADMIN_ROLE` 3) Creates a Uniswap pair ",
 					"params": {
-						"_uniswapV2Router": "Address of the Uniswap V2 router (e.g., 0x7a250d563...)"
+						"_uniswapV2Router": "Address of Uniswap V2 router"
 					}
 				},
 				"decimals()": {
@@ -1182,15 +1176,6 @@
 				"revokeRole(bytes32,address)": {
 					"details": "Revokes `role` from `account`. If `account` had been granted `role`, emits a {RoleRevoked} event. Requirements: - the caller must have ``role``'s admin role. May emit a {RoleRevoked} event."
 				},
-				"setCooldownConfig(bool,uint256)": {
-					"details": "Toggle cooldown enforcement and set the cooldown duration in seconds."
-				},
-				"setSniperProtection(bool,uint256)": {
-					"details": "Turn sniper protection on or off, and set how many blocks to protect."
-				},
-				"setTradingEnabled(bool)": {
-					"details": "Enables or disables trading. If enabling, records the `launchBlock`       for anti-sniping logic if `sniperProtectionEnabled` is true."
-				},
 				"supportsInterface(bytes4)": {
 					"details": "See {IERC165-supportsInterface}."
 				},
@@ -1213,7 +1198,7 @@
 		"userdoc": {
 			"kind": "user",
 			"methods": {},
-			"notice": "  - Zero-tax ERC20 token  - **AccessControl** with a designated DAO as `ADMIN_ROLE` (not the deployer EOA)  - **Advanced Anti-Sniping**: (launchBlock sniper checks, optional cooldown)  - Basic anti-bot features: (trading toggle, blacklist, max tx limit)  - Liquidity management (Uniswap V2)  - Rescue functions for stuck tokens/ETH",
+			"notice": " - Zero-tax ERC20 token - Uses AccessControl for admin privileges (DAO as `ADMIN_ROLE`) - Time-based anti-sniping (avoid L2 block.number issues) - Basic anti-bot (trading toggle, merged blacklist+timestamp, max tx limit) - Overridden `approve(...)` to mitigate front-running - Pinning pragma, short revert strings, extra gas optimizations",
 			"version": 1
 		}
 	},
@@ -1314,11 +1299,11 @@
 			]
 		},
 		"contracts/WallyToken.sol": {
-			"keccak256": "0x47c5513d5c4b5001ad2c387e7743538c55bab70c3a65c8812d421bba82c8c758",
+			"keccak256": "0x7cc933992962a211a5a93650066ef0d35740f394db7ef0de7e8b37a887394cbc",
 			"license": "MIT",
 			"urls": [
-				"bzz-raw://28dc785d1c4216d89229b4ff6a26a3336787e81b5eb17929282be351be66bcb9",
-				"dweb:/ipfs/QmS9VAXvhrHLFQvyLgMFCYzQXjHzozK6bhFxvg9VB2AKpu"
+				"bzz-raw://f08906b32c54a5352dec6cfb5f3ae84a56ddfc8c763b553898c559675afb848d",
+				"dweb:/ipfs/QmX8uZUY2HavHxmRkMFKzFoEocWrPzwDgmD47NF12MTjk6"
 			]
 		}
 	},

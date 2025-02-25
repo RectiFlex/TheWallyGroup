@@ -195,11 +195,11 @@
 			]
 		},
 		"contracts/WallyToken.sol": {
-			"keccak256": "0x47c5513d5c4b5001ad2c387e7743538c55bab70c3a65c8812d421bba82c8c758",
+			"keccak256": "0x7cc933992962a211a5a93650066ef0d35740f394db7ef0de7e8b37a887394cbc",
 			"license": "MIT",
 			"urls": [
-				"bzz-raw://28dc785d1c4216d89229b4ff6a26a3336787e81b5eb17929282be351be66bcb9",
-				"dweb:/ipfs/QmS9VAXvhrHLFQvyLgMFCYzQXjHzozK6bhFxvg9VB2AKpu"
+				"bzz-raw://f08906b32c54a5352dec6cfb5f3ae84a56ddfc8c763b553898c559675afb848d",
+				"dweb:/ipfs/QmX8uZUY2HavHxmRkMFKzFoEocWrPzwDgmD47NF12MTjk6"
 			]
 		}
 	},

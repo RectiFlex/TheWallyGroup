@@ -1,81 +1,83 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/* ---------------------------------
+ * Custom Errors (saving gas vs. revert strings)
+ * --------------------------------- */
+error ZeroAmount();
+error InvalidLockChoice();
+error AlreadyWithdrawn();
+error LockNotOver();
+error InsufficientBalance();
+error InvalidAddress();
+
 /**
  * @title WallyStaking
- * @dev Users can stake Wally Tokens for fixed durations (3, 6, or 12 months) to earn rewards.
+ * @dev Stake Wally Tokens for fixed durations (3, 6, or 12 months) to earn APY-based rewards.
  *
- * APY-based reward: reward = principal * (apyBps/10000) * (timeStaked / 365 days)
- *
- * IMPORTANT:
- * - This contract must be funded with enough TWG to cover principal + rewards.
- * - The DAO or an admin can set APYs, rescue leftover tokens, etc.
+ * Must be funded with enough TWG to cover principal + rewards.
+ * Addresses many audit items: M001 (fees?), M002 (array length check), M003 (checking transfer), etc.
  */
 contract WallyStaking is AccessControl, ReentrancyGuard {
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 internal constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
-    // Wally Token
-    IERC20 public immutable wallyToken;
+    IERC20 internal immutable wallyToken;
 
-    // Lock durations (in seconds)
-    uint256 public constant LOCK_3_MONTHS = 90 days;
-    uint256 public constant LOCK_6_MONTHS = 180 days;
-    uint256 public constant LOCK_12_MONTHS = 365 days;
+    // Lock durations (internal, pinned)
+    uint256 internal constant LOCK_3_MONTHS = 90 days;
+    uint256 internal constant LOCK_6_MONTHS = 180 days;
+    uint256 internal constant LOCK_12_MONTHS = 365 days;
 
-    // APYs in basis points (e.g., 500 = 5%)
-    uint256 public apy3Months = 500;    // 5%
-    uint256 public apy6Months = 1000;   // 10%
-    uint256 public apy12Months = 1500;  // 15%
+    // APYs in basis points, e.g. 500 = 5%
+    uint256 public apy3Months = 500;
+    uint256 public apy6Months = 1000;
+    uint256 public apy12Months = 1500;
 
     struct StakeInfo {
         uint256 amount;
         uint256 startTimestamp;
         uint256 lockDuration;
-        uint256 apy;     // basis points
+        uint256 apy; // basis points
         bool withdrawn;
     }
 
-    // user => array of stakes
-    mapping(address => StakeInfo[]) public stakes;
+    // (I003) Named mapping parameter for >=0.8.18
+    mapping(address user => StakeInfo[]) internal _stakes;
 
     event Staked(address indexed user, uint256 amount, uint256 lockDuration, uint256 apy);
     event Withdrawn(address indexed user, uint256 stakeIndex, uint256 reward);
 
-    constructor(address _wallyToken, address _admin) {
-        require(_wallyToken != address(0), "Invalid token address");
-        require(_admin != address(0), "Invalid admin address");
+    constructor(address _wallyToken, address _admin) payable { // (G008) constructor payable
+        if (_wallyToken == address(0)) revert InvalidAddress();
+        if (_admin == address(0)) revert InvalidAddress();
 
         wallyToken = IERC20(_wallyToken);
         _grantRole(ADMIN_ROLE, _admin);
     }
 
     /**
-     * @dev Stake a specific `amount` of TWG for one of the fixed durations (3,6,12 months).
+     * @dev Stake a specific `amount` of TWG for one of the fixed durations (3, 6, 12 months).
      */
     function stake(uint256 amount, uint256 lockChoice) external nonReentrant {
-        require(amount > 0, "Cannot stake zero");
+        if (amount == 0) revert ZeroAmount();
 
-        // Determine lock duration / APY
         (uint256 chosenLock, uint256 chosenAPY) = _getLockInfo(lockChoice);
 
-        // Transfer TWG from user to this contract
+        // Transfer from user to contract (M003 => check bool return)
         bool success = wallyToken.transferFrom(msg.sender, address(this), amount);
-        require(success, "Transfer failed");
+        if (!success) revert InsufficientBalance();
 
-        // Record stake
-        stakes[msg.sender].push(
-            StakeInfo({
-                amount: amount,
-                startTimestamp: block.timestamp,
-                lockDuration: chosenLock,
-                apy: chosenAPY,
-                withdrawn: false
-            })
-        );
+        _stakes[msg.sender].push(StakeInfo({
+            amount: amount,
+            startTimestamp: block.timestamp, // (I002) approximate time
+            lockDuration: chosenLock,
+            apy: chosenAPY,
+            withdrawn: false
+        }));
 
         emit Staked(msg.sender, amount, chosenLock, chosenAPY);
     }
@@ -84,42 +86,33 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
      * @dev Withdraw staked tokens + reward after lock period ends.
      */
     function withdraw(uint256 stakeIndex) external nonReentrant {
-        require(stakeIndex < stakes[msg.sender].length, "Invalid stake index");
-        StakeInfo storage userStake = stakes[msg.sender][stakeIndex];
-        require(!userStake.withdrawn, "Already withdrawn");
+        StakeInfo[] storage userStakes = _stakes[msg.sender];
+        // (M002) check array length
+        if (stakeIndex >= userStakes.length) revert InvalidLockChoice();
+
+        StakeInfo storage userStake = userStakes[stakeIndex];
+        if (userStake.withdrawn) revert AlreadyWithdrawn();
 
         uint256 unlockTime = userStake.startTimestamp + userStake.lockDuration;
-        require(block.timestamp >= unlockTime, "Lock not over");
+        if (block.timestamp < unlockTime) revert LockNotOver();
 
         uint256 principal = userStake.amount;
-        uint256 timeStaked = userStake.lockDuration; // entire lock duration
-        uint256 reward = _calculateReward(principal, userStake.apy, timeStaked);
+        uint256 timeStaked = userStake.lockDuration; 
+        // (M004) typical formula for APY
+        uint256 reward = (principal * userStake.apy * timeStaked) / (365 days * 10000);
 
         userStake.withdrawn = true;
 
         uint256 totalPayment = principal + reward;
-        require(
-            wallyToken.balanceOf(address(this)) >= totalPayment,
-            "Insufficient reward pool"
-        );
+        if (wallyToken.balanceOf(address(this)) < totalPayment) revert InsufficientBalance();
 
-        wallyToken.transfer(msg.sender, totalPayment);
+        bool success = wallyToken.transfer(msg.sender, totalPayment);
+        if (!success) revert InsufficientBalance();
 
         emit Withdrawn(msg.sender, stakeIndex, reward);
     }
 
-    /**
-     * @dev Calculate simple interest rewards:
-     *  reward = principal * apyBps * timeStaked / (365 days * 10000)
-     */
-    function _calculateReward(
-        uint256 principal,
-        uint256 apyBps,
-        uint256 timeStaked
-    ) internal pure returns (uint256) {
-        return (principal * apyBps * timeStaked) / (365 days * 10000);
-    }
-
+    // Internal helper
     function _getLockInfo(uint256 lockChoice)
         internal
         view
@@ -135,31 +128,44 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
             chosenLock = LOCK_12_MONTHS;
             chosenAPY = apy12Months;
         } else {
-            revert("Invalid lock choice");
+            revert InvalidLockChoice();
         }
     }
 
-    // ------------------------
-    // Admin Functions
-    // ------------------------
-
+    /**
+     * @dev Admin can update APYs.
+     */
     function setAPYs(uint256 _apy3, uint256 _apy6, uint256 _apy12)
         external
         onlyRole(ADMIN_ROLE)
     {
-        apy3Months = _apy3;
-        apy6Months = _apy6;
-        apy12Months = _apy12;
+        if (apy3Months != _apy3) {
+            apy3Months = _apy3;
+        }
+        if (apy6Months != _apy6) {
+            apy6Months = _apy6;
+        }
+        if (apy12Months != _apy12) {
+            apy12Months = _apy12;
+        }
     }
 
     /**
-     * @dev Rescue any leftover tokens. Useful if random tokens are sent by mistake.
+     * @dev Rescue any leftover tokens.
      */
     function rescueTokens(address tokenAddress, uint256 amount, address to)
         external
         onlyRole(ADMIN_ROLE)
     {
-        require(to != address(0), "Invalid 'to'");
-        IERC20(tokenAddress).transfer(to, amount);
+        if (to == address(0)) revert InvalidAddress();
+        bool success = IERC20(tokenAddress).transfer(to, amount);
+        if (!success) revert InsufficientBalance();
+    }
+
+    /**
+     * @dev Public getter for a user’s full stake array.
+     */
+    function getStakes(address user) external view returns (StakeInfo[] memory) {
+        return _stakes[user];
     }
 }
