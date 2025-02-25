@@ -1,4 +1,4 @@
-
+Below is a corrected GitHub-compatible version of the README. The content after the WallyToken code example is no longer stuck inside a snippet. Notice how we properly close the code fence with three backticks before starting the subsequent sections.
 
 # Wally Token Ecosystem
 
@@ -15,6 +15,7 @@ Here you’ll find all the Solidity smart contracts and supporting code for the 
 ---
 
 ## Table of Contents
+
 - [Overview](#overview)  
 - [Contracts](#contracts)  
   - [WallyToken](#1-wallytoken-)  
@@ -33,6 +34,7 @@ Here you’ll find all the Solidity smart contracts and supporting code for the 
 ---
 
 ## Overview
+
 The **Wally** ecosystem is designed to bring together **DeFi** capabilities and **community-driven** initiatives. Here’s a quick rundown:
 
 - **Zero-Tax ERC20** token with advanced features.  
@@ -49,6 +51,7 @@ Feel free to explore, customize, and build upon these contracts to fit your proj
 ## Contracts
 
 ### 1. WallyToken ♻️
+
 A zero-tax ERC20 token with:
 
 - **DAO or Multi-Sig Control** via `ADMIN_ROLE`.  
@@ -68,9 +71,9 @@ contract WallyToken is ERC20, AccessControl {
     function setTradingEnabled(bool _enabled) external onlyRole(ADMIN_ROLE) { ... }
     // ...
 }
-///
-</details>
 
+</details>
+```
 
 2. WallyStaking 💰
 
@@ -143,7 +146,8 @@ forge test
 
 
 
-Explore the test/ directory for sample tests covering each contract. Make sure you have a local node or test environment running if needed.
+Explore the test/ directory for sample tests covering each contract.
+Make sure you have a local node or test environment running if needed.
 
 Deployment
 	1.	Deploy WallyToken by passing the Uniswap Router address in the constructor.
@@ -171,5 +175,3 @@ Always audit, test, and review thoroughly before mainnet deployment.
 The repository owners are not liable for any damages or losses arising from usage of this code.
 
 Enjoy building with Wally! 🚀✨
-
----
