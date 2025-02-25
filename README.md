@@ -68,7 +68,7 @@ contract WallyToken is ERC20, AccessControl {
     function setTradingEnabled(bool _enabled) external onlyRole(ADMIN_ROLE) { ... }
     // ...
 }
-
+///
 </details>
 
 
