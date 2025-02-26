@@ -1,0 +1,73 @@
+{
+	"deploy": {
+		"VM:-": {
+			"linkReferences": {},
+			"autoDeployLib": true
+		},
+		"main:1": {
+			"linkReferences": {},
+			"autoDeployLib": true
+		},
+		"ropsten:3": {
+			"linkReferences": {},
+			"autoDeployLib": true
+		},
+		"rinkeby:4": {
+			"linkReferences": {},
+			"autoDeployLib": true
+		},
+		"kovan:42": {
+			"linkReferences": {},
+			"autoDeployLib": true
+		},
+		"goerli:5": {
+			"linkReferences": {},
+			"autoDeployLib": true
+		},
+		"Custom": {
+			"linkReferences": {},
+			"autoDeployLib": true
+		}
+	},
+	"data": {
+		"bytecode": {
+			"functionDebugData": {},
+			"generatedSources": [],
+			"linkReferences": {},
+			"object": "6080806040523460175760399081601c823930815050f35b5f80fdfe5f80fdfea264697066735822122065e408fe2766c4c15cafb9e138b77234451c1b475677d04527f11b7a9f08799164736f6c634300081c0033",
+			"opcodes": "PUSH1 0x80 DUP1 PUSH1 0x40 MSTORE CALLVALUE PUSH1 0x17 JUMPI PUSH1 0x39 SWAP1 DUP2 PUSH1 0x1C DUP3 CODECOPY ADDRESS DUP2 POP POP RETURN JUMPDEST PUSH0 DUP1 REVERT INVALID PUSH0 DUP1 REVERT INVALID LOG2 PUSH5 0x6970667358 0x22 SLT KECCAK256 PUSH6 0xE408FE2766C4 0xC1 TLOAD 0xAF 0xB9 0xE1 CODESIZE 0xB7 PUSH19 0x34451C1B475677D04527F11B7A9F0879916473 PUSH16 0x6C634300081C00330000000000000000 ",
+			"sourceMap": "341:9712:0:-:0;;;;;;;;;;;;;;;;;;;;;"
+		},
+		"deployedBytecode": {
+			"functionDebugData": {},
+			"generatedSources": [],
+			"immutableReferences": {},
+			"linkReferences": {},
+			"object": "5f80fdfea264697066735822122065e408fe2766c4c15cafb9e138b77234451c1b475677d04527f11b7a9f08799164736f6c634300081c0033",
+			"opcodes": "PUSH0 DUP1 REVERT INVALID LOG2 PUSH5 0x6970667358 0x22 SLT KECCAK256 PUSH6 0xE408FE2766C4 0xC1 TLOAD 0xAF 0xB9 0xE1 CODESIZE 0xB7 PUSH19 0x34451C1B475677D04527F11B7A9F0879916473 PUSH16 0x6C634300081C00330000000000000000 ",
+			"sourceMap": "341:9712:0:-:0;;"
+		},
+		"gasEstimates": {
+			"creation": {
+				"codeDepositCost": "11400",
+				"executionCost": "infinite",
+				"totalCost": "infinite"
+			},
+			"internal": {
+				"divWadDown(uint256,uint256)": "infinite",
+				"divWadUp(uint256,uint256)": "infinite",
+				"mulDivDown(uint256,uint256,uint256)": "infinite",
+				"mulDivUp(uint256,uint256,uint256)": "infinite",
+				"mulWadDown(uint256,uint256)": "infinite",
+				"mulWadUp(uint256,uint256)": "infinite",
+				"rpow(uint256,uint256,uint256)": "infinite",
+				"sqrt(uint256)": "infinite",
+				"unsafeDiv(uint256,uint256)": "infinite",
+				"unsafeDivUp(uint256,uint256)": "infinite",
+				"unsafeMod(uint256,uint256)": "infinite"
+			}
+		},
+		"methodIdentifiers": {}
+	},
+	"abi": []
+}
