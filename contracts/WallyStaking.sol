@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import ".deps/npm/@openzeppelin/contracts/utils/math/FixedPointMathLib.sol";
 
 /* -----------------------------------------------------
  * Custom Errors
@@ -20,6 +21,11 @@ error NoActiveStake();
 error TransferFailed();
 error DurationAlreadyExists();
 error InsufficientBalance();
+error CannotRecoverStakedTokens();
+error MaxDurationsLimitReached();
+error DurationTooLong(uint256 maxAllowedDuration);
+error InvalidStakingPlan();
+error UnauthorizedCaller(address caller);
 
 /**
  * @title WallyStaking
@@ -35,7 +41,7 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     bytes32 private constant _REWARDS_MANAGER_ROLE = keccak256("REWARDS_MANAGER_ROLE");
 
     // Events
-    event Staked(address indexed user, uint256 amount, uint256 indexed duration, uint256 unlockTime);
+    event Staked(address indexed user, uint256 amount, uint256 indexed duration);
     event Unstaked(address indexed user, uint256 stakedAmount, uint256 rewardAmount);
     event RewardClaimed(address indexed user, uint256 amount);
     event StakingPlanAdded(uint256 indexed duration, uint256 indexed apy);
@@ -43,6 +49,7 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     event RewardsAdded(uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 amount);
     event StakingPaused(bool indexed isPaused);
+    event ERC20Recovered(address indexed token, uint256 amount, address indexed to);
 
     // Staking plans
     struct StakingPlan {
@@ -73,13 +80,16 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     // Constants
     uint256 private constant _BASIS_POINTS = 10000; // 100% = 10000
     uint256 private constant _ONE_YEAR = 365 days;
+    uint256 private constant _MAX_DURATIONS = 20; // Limit the number of staking durations to prevent DoS
+    uint256 private constant _MAX_DURATION_LENGTH = 5 * 365 days; // 5 years maximum staking period
 
     /**
      * @dev Constructor sets up the initial contract state
      * @param tokenAddress Address of the WallyToken contract
      * @param adminAddress Address of the admin who will manage the contract
+     * Note: Constructor is marked as payable for gas optimization
      */
-    constructor(address tokenAddress, address adminAddress) payable { // Made payable for gas optimization
+    constructor(address tokenAddress, address adminAddress) payable {
         if (tokenAddress == address(0)) revert InvalidZeroAddress();
         if (adminAddress == address(0)) revert InvalidZeroAddress();
 
@@ -111,6 +121,12 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         nonReentrant 
         onlyRole(_ADMIN_ROLE) 
     {
+        // Validate duration is reasonable
+        if (duration > _MAX_DURATION_LENGTH) revert DurationTooLong(_MAX_DURATION_LENGTH);
+        
+        // Validate APR is reasonable (between 0% and 100%)
+        if (apr > _BASIS_POINTS) revert InvalidAmount();
+        
         _addStakingPlan(duration, apr);
     }
 
@@ -125,9 +141,12 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         nonReentrant 
         onlyRole(_ADMIN_ROLE) 
     {
+        // Validate APR is reasonable (between 0% and 100%)
+        if (apr > _BASIS_POINTS) revert InvalidAmount();
+        
         // Validate duration exists
         bool found = false;
-        // Cache array length to save gas
+        // Cache array length to save gas and prevent DoS attacks
         uint256 durationsLength = _availableDurations.length;
         for (uint256 i = 0; i < durationsLength; ++i) { // Using pre-increment (++i) instead of post-increment (i++)
             if (_availableDurations[i] == duration) {
@@ -159,8 +178,11 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         nonReentrant 
         onlyRole(_ADMIN_ROLE) 
     {
-        // Only update if value is different
-        if (_stakingPaused != paused) {
+        // Cache storage variable
+        bool stakingPaused = _stakingPaused;
+        
+        // Only update if value is different to avoid unnecessary gas costs
+        if (stakingPaused != paused) {
             _stakingPaused = paused;
             emit StakingPaused(paused);
         }
@@ -177,6 +199,9 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     {
         if (amount == 0) revert InvalidAmount();
         
+        // Verify caller has sufficient balance
+        if (_token.balanceOf(msg.sender) < amount) revert InsufficientBalance();
+        
         // Cache address(this) for multiple uses
         address self = address(this);
         
@@ -186,8 +211,7 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         // Transfer tokens from sender to contract
         _token.safeTransferFrom(msg.sender, self, amount);
         
-        // Update rewards pool
-        // Using direct assignment instead of +=
+        // Update rewards pool using direct assignment instead of +=
         _rewardsPool = rewardsPool + amount;
         
         emit RewardsAdded(amount);
@@ -212,19 +236,23 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         
         // Check if the duration is valid and active
         StakingPlan storage plan = _stakingPlans[duration];
-        if (!plan.isActive) revert InvalidDuration();
+        if (!plan.isActive) revert InvalidStakingPlan();
         
-        // Cache address(this)
+        // Verify caller has sufficient balance
+        if (_token.balanceOf(msg.sender) < amount) revert InsufficientBalance();
+        
+        // Cache address(this) and block.timestamp
         address self = address(this);
-        
-        // Cache current block timestamp to save gas
         uint256 currentTime = block.timestamp;
         
         // Check if user has an active stake
         UserStakingData storage userData = _userStakingData[msg.sender];
-        if (userData.isActive) {
-            // If user already has an active stake, first claim any available rewards
-            if (userData.stakingStartTime != 0 && currentTime >= userData.stakingStartTime) {
+        bool isUserStakeActive = userData.isActive;
+        
+        // If user already has an active stake, first claim any available rewards
+        if (isUserStakeActive) {
+            uint256 stakingStartTime = userData.stakingStartTime;
+            if (stakingStartTime != 0 && currentTime >= stakingStartTime) {
                 uint256 pendingRewards = calculatePendingRewards(msg.sender);
                 if (pendingRewards != 0) {
                     _claimRewards(msg.sender, pendingRewards);
@@ -235,7 +263,7 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         // Calculate unlock time
         uint256 unlockTime = currentTime + duration;
         
-        // Transfer tokens from user to contract
+        // Transfer tokens from user to contract (following checks-effects-interactions pattern)
         _token.safeTransferFrom(msg.sender, self, amount);
         
         // Update user data - assigning individual fields instead of the whole struct at once
@@ -247,11 +275,10 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         userData.isActive = true;
         userData.lastClaimTime = currentTime;
         
-        // Update total staked amount
-        // Using direct assignment instead of +=
+        // Update total staked amount using direct assignment
         _totalStaked = totalStaked + amount;
         
-        emit Staked(msg.sender, amount, duration, 0); // Don't need to include timestamp in event
+        emit Staked(msg.sender, amount, duration);
     }
 
     /**
@@ -267,8 +294,8 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         if (!userData.isActive) revert NoActiveStake();
         if (block.timestamp <= userData.stakingEndTime) revert StakingStillLocked();
         
-        // No need to cache immutable variables
-        address self = address(this);
+        // Cache storage variable
+        uint256 totalStaked = _totalStaked;
         
         uint256 stakedAmount = userData.stakedAmount;
         uint256 pendingRewards = calculatePendingRewards(msg.sender);
@@ -284,7 +311,7 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         
         // Update total staked
         // Using direct assignment instead of -=
-        _totalStaked = _totalStaked - stakedAmount;
+        _totalStaked = totalStaked - stakedAmount;
         
         // Transfer tokens back to user
         _token.safeTransfer(msg.sender, stakedAmount);
@@ -322,21 +349,26 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     /**
      * @dev Emergency withdraw function in case of critical issues
      * Note: This doesn't calculate or distribute rewards
+     * @notice Only callable by admin role
      */
-    function emergencyWithdraw() 
+    function emergencyWithdraw(address user) 
         external 
         nonReentrant 
+        onlyRole(_ADMIN_ROLE)
     {
-        UserStakingData storage userData = _userStakingData[msg.sender];
+        if (user == address(0)) revert InvalidZeroAddress();
+        
+        UserStakingData storage userData = _userStakingData[user];
         
         // Validations
         if (!userData.isActive) revert NoActiveStake();
         
-        // No need to cache immutable variables
+        // Cache storage variable
+        uint256 totalStaked = _totalStaked;
         
         uint256 stakedAmount = userData.stakedAmount;
         
-        // Reset user data
+        // Reset user data first (checks-effects-interactions pattern)
         userData.stakedAmount = 0;
         userData.stakingStartTime = 0;
         userData.stakingEndTime = 0;
@@ -346,13 +378,39 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         userData.lastClaimTime = 0;
         
         // Update total staked
-        // Using direct assignment instead of -=
-        _totalStaked = _totalStaked - stakedAmount;
+        _totalStaked = totalStaked - stakedAmount;
         
         // Transfer tokens back to user
-        _token.safeTransfer(msg.sender, stakedAmount);
+        _token.safeTransfer(user, stakedAmount);
         
-        emit EmergencyWithdraw(msg.sender, stakedAmount);
+        emit EmergencyWithdraw(user, stakedAmount);
+    }
+
+    /**
+     * @dev Recover ERC20 tokens accidentally sent to the contract
+     * @param tokenAddress Address of the token to recover
+     * @param amount Amount to recover
+     * @notice Only callable by admin role
+     */
+    function recoverERC20(address tokenAddress, uint256 amount) 
+        external 
+        nonReentrant 
+        onlyRole(_ADMIN_ROLE)
+    {
+        // Input validations
+        if (tokenAddress == address(0)) revert InvalidZeroAddress();
+        if (amount == 0) revert InvalidAmount();
+        
+        // Ensure that staked tokens cannot be recovered
+        if (tokenAddress == address(_token)) revert CannotRecoverStakedTokens();
+        
+        // Ensure the contract has enough balance
+        if (IERC20(tokenAddress).balanceOf(address(this)) < amount) revert InsufficientBalance();
+        
+        // Recover other ERC20 tokens
+        IERC20(tokenAddress).safeTransfer(msg.sender, amount);
+        
+        emit ERC20Recovered(tokenAddress, amount, msg.sender);
     }
 
     /**
@@ -371,7 +429,8 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
             return 0;
         }
         
-        // Calculate time elapsed since last claim
+        // Note on block.timestamp: Although it can be slightly manipulated by miners,
+        // for staking periods measured in days/months, this has minimal practical impact
         uint256 endTime = block.timestamp;
         if (endTime >= userData.stakingEndTime) {
             endTime = userData.stakingEndTime;
@@ -382,20 +441,28 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
             return 0;
         }
         
-        // Calculate rewards: (stakedAmount * APR * timeElapsed) / (BASIS_POINTS * ONE_YEAR)
-        // Safe math calculation to avoid overflow and precision loss
-        // Multiply first, then divide to minimize precision loss
-        uint256 numerator = userData.stakedAmount * userData.apr * timeElapsed;
-        uint256 denominator = _BASIS_POINTS * _ONE_YEAR;
-        rewards = numerator / denominator;
+        // Calculate rewards using FixedPointMathLib for precision
+        // First calculate stakedAmount * apr safely
+        uint256 stakedAmountTimeApr = FixedPointMathLib.mulDivDown(
+            userData.stakedAmount, 
+            userData.apr, 
+            _BASIS_POINTS
+        );
         
-        // No need for return statement when using named returns
+        // Then multiply by timeElapsed and divide by ONE_YEAR
+        rewards = FixedPointMathLib.mulDivDown(
+            stakedAmountTimeApr,
+            timeElapsed,
+            _ONE_YEAR
+        );
+        
+        // No explicit return needed when using named returns
     }
 
     /**
      * @dev Get user staking information
      * @param user Address of the user
-     * @return userInfo Struct containing all user staking information
+     * @return User staking information
      */
     // Packed for gas efficiency - similar types grouped together
     struct UserStakingInfo {
@@ -411,10 +478,11 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     function getUserStakingInfo(address user) 
         external 
         view 
-        returns (UserStakingInfo memory userInfo) 
+        returns (UserStakingInfo memory) 
     {
         UserStakingData storage userData = _userStakingData[user];
         
+        UserStakingInfo memory userInfo;
         userInfo.stakedAmount = userData.stakedAmount;
         userInfo.stakingStartTime = userData.stakingStartTime;
         userInfo.stakingEndTime = userData.stakingEndTime;
@@ -448,7 +516,7 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     function getAvailableDurations() 
         external 
         view 
-        returns (uint256[] memory durations) 
+        returns (uint256[] memory) 
     {
         return _availableDurations;
     }
@@ -462,7 +530,7 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     function getContractStats() 
         external 
         view 
-        returns (uint256 totalStaked, uint256 rewardsPool, bool stakingPaused) 
+        returns (uint256, uint256, bool) 
     {
         return (_totalStaked, _rewardsPool, _stakingPaused);
     }
@@ -476,7 +544,12 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
         private 
     {
         if (duration == 0) revert InvalidDuration();
+        if (duration > _MAX_DURATION_LENGTH) revert DurationTooLong(_MAX_DURATION_LENGTH);
+        if (apr > _BASIS_POINTS) revert InvalidAmount();
         if (_stakingPlans[duration].isActive) revert DurationAlreadyExists();
+        
+        // Prevent DoS attacks by limiting the number of durations
+        if (_availableDurations.length >= _MAX_DURATIONS) revert MaxDurationsLimitReached();
         
         // Create and set the staking plan
         StakingPlan storage plan = _stakingPlans[duration];
@@ -496,13 +569,18 @@ contract WallyStaking is AccessControl, ReentrancyGuard {
     function _claimRewards(address user, uint256 amount) 
         private 
     {
+        if (user == address(0)) revert InvalidZeroAddress();
+        if (amount == 0) revert InvalidAmount();
+        
         // Cache storage variable to avoid multiple SLOADs
         uint256 rewardsPool = _rewardsPool;
         
         if (amount >= rewardsPool) revert InsufficientRewardsPool(); // Use non-strict inequality
         
-        // Using direct assignment instead of -=
+        // State changes first (checks-effects-interactions pattern)
         _rewardsPool = rewardsPool - amount;
+        
+        // External call last
         _token.safeTransfer(user, amount);
         
         emit RewardClaimed(user, amount);
