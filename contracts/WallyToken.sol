@@ -21,7 +21,8 @@ error NewAllowanceNonZero();         // H001: Added separate error for clarity
 error MustZeroAllowanceFirst();      // G002: Custom error instead of string revert
 error InvalidZeroAddress();          // G004: Custom error instead of long require string
 error ETHTransferFailed();           // G004: Custom error instead of long require string
-error InsufficientBalance();         // G010: New custom error for insufficient balance
+error InsufficientBalance();         // For ETH balance checks
+error InsufficientTokenBalance();    // For token balance checks
 
 interface IUniswapV2Factory {
     function createPair(address tokenA, address tokenB) external returns (address pair);
@@ -103,14 +104,14 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         if (uniswapV2Router_ == address(0)) revert InvalidZeroAddress();
         if (daoAddress_ == address(0)) revert InvalidZeroAddress();
 
-        // G005: Cache _daoAddress for multiple uses
-        address daoAddress = daoAddress_;
-        _daoAddress = daoAddress;
+        // G005: Cache _daoAddress for multiple uses - renamed to avoid name collision with function
+        address cachedDaoAddress = daoAddress_;
+        _daoAddress = cachedDaoAddress;
 
         _mint(msg.sender, _INITIAL_SUPPLY);
 
         // Use cached daoAddress
-        _grantRole(_ADMIN_ROLE, daoAddress);
+        _grantRole(_ADMIN_ROLE, cachedDaoAddress);
         _setRoleAdmin(_MINTER_ROLE, _ADMIN_ROLE);
         _setRoleAdmin(_BURNER_ROLE, _ADMIN_ROLE);
 
@@ -133,17 +134,18 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
     /**
      * @dev Approve fix for front-running (H001).
      * Requires setting allowance to 0 first before setting a new non-zero value.
+     * This is the best practice to prevent the ERC20 approval front-running attack.
      */
     function approve(address spender, uint256 amount)
         public
         virtual
         override
-        returns (bool)
+        returns (bool success)
     {
-        // H001: Front-running protection improved
-        // Must zero out old allowance before setting new, or revert
+        // H001: Improved front-running protection
         uint256 current = allowance(msg.sender, spender);
-        // G003: Split revert statements for better gas efficiency
+        
+        // If current allowance is not zero, only allow setting to zero
         if (current != 0) {
             if (amount != 0) {
                 revert CurrentAllowanceNonZero();
@@ -152,14 +154,21 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         
         // L002: Event before changing allowance
         emit AllowanceChanged(msg.sender, spender, current, amount);
-        return super.approve(spender, amount);
+        success = super.approve(spender, amount);
+        
+        // Emit another event to confirm the approval was successful
+        if (success) {
+            emit Approval(msg.sender, spender, amount);
+        }
+        
+        return success;
     }
 
     // Force partial allowance changes to revert
     function increaseAllowance(address /*spender*/, uint256 /*addedValue*/)
         public
         pure
-        returns (bool)
+        returns (bool success)
     {
         revert MustZeroAllowanceFirst();
     }
@@ -167,21 +176,38 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
     function decreaseAllowance(address /*spender*/, uint256 /*subtractedValue*/)
         public
         pure
-        returns (bool)
+        returns (bool success)
     {
         revert MustZeroAllowanceFirst();
     }
 
-    // Mint & Burn
-    function mint(address to, uint256 amount) external nonReentrant onlyRole(_MINTER_ROLE) {
+    // Mint & Burn - with proper events and nonReentrant for security
+    function mint(address to, uint256 amount) 
+        external 
+        nonReentrant 
+        onlyRole(_MINTER_ROLE) 
+        returns (bool success)
+    {
         if (to == address(0)) revert InvalidZeroAddress();
+        
         _mint(to, amount);
         emit Minted(to, amount);
+        success = true;
+        
+        return success;
     }
 
-    function burn(uint256 amount) external nonReentrant onlyRole(_BURNER_ROLE) {
+    function burn(uint256 amount) 
+        external 
+        nonReentrant 
+        onlyRole(_BURNER_ROLE) 
+        returns (bool success)
+    {
         _burn(_msgSender(), amount);
         emit Burned(_msgSender(), amount);
+        success = true;
+        
+        return success;
     }
 
     // Setters - L001: Fixed function returns with no return issue
@@ -190,14 +216,11 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         nonReentrant
         onlyRole(_ADMIN_ROLE)
     {
-        // Cache roles to save gas
-        bytes32 adminRole = _ADMIN_ROLE;
-        
-        // G005: Cache storage variables
-        bool tradingEnabled = _tradingEnabled;
+        // G005: Cache storage variables - renamed to avoid name collision with function
+        bool isTradingEnabled = _tradingEnabled;
         
         // Only update if value is different to save gas (avoid Gsreset)
-        if (tradingEnabled != enabled) {
+        if (isTradingEnabled != enabled) {
             _tradingEnabled = enabled;
             emit TradingEnabledSet(enabled);
             
@@ -217,22 +240,19 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         nonReentrant
         onlyRole(_ADMIN_ROLE)
     {
-        // Cache roles to save gas
-        bytes32 adminRole = _ADMIN_ROLE;
-        
-        // G005: Cache storage variables
-        bool sniperProtection = _sniperProtectionEnabled;
-        uint256 snipeTime = _snipeTime;
+        // G005: Cache storage variables - renamed to avoid name collision with function
+        bool isSniperProtectionEnabled = _sniperProtectionEnabled;
+        uint256 snipeTimeValue = _snipeTime;
         bool updated = false;
         
         // Only update if value is different to save gas (avoid Gsreset)
-        if (sniperProtection != enabled) {
+        if (isSniperProtectionEnabled != enabled) {
             _sniperProtectionEnabled = enabled;
             updated = true;
         }
 
         // Only update if value is different to save gas (avoid Gsreset)
-        if (snipeTime != timeSeconds) {
+        if (snipeTimeValue != timeSeconds) {
             _snipeTime = timeSeconds;
             updated = true;
         }
@@ -248,22 +268,19 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         nonReentrant
         onlyRole(_ADMIN_ROLE)
     {
-        // Cache roles to save gas
-        bytes32 adminRole = _ADMIN_ROLE;
-        
-        // G005: Cache storage variables
-        bool cooldownEnabled = _cooldownEnabled;
-        uint256 cooldownTime = _cooldownTime;
+        // G005: Cache storage variables - renamed to avoid name collision with function
+        bool isCooldownEnabled = _cooldownEnabled;
+        uint256 cooldownTimeValue = _cooldownTime;
         bool updated = false;
         
         // Only update if value is different to save gas (avoid Gsreset)
-        if (cooldownEnabled != enabled) {
+        if (isCooldownEnabled != enabled) {
             _cooldownEnabled = enabled;
             updated = true;
         }
         
         // Only update if value is different to save gas (avoid Gsreset)
-        if (cooldownTime != cooldownSec) {
+        if (cooldownTimeValue != cooldownSec) {
             _cooldownTime = cooldownSec;
             updated = true;
         }
@@ -279,14 +296,11 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         nonReentrant
         onlyRole(_ADMIN_ROLE)
     {
-        // Cache roles to save gas
-        bytes32 adminRole = _ADMIN_ROLE;
-        
-        // G005: Cache storage variables
-        uint256 maxTxAmount = _maxTxAmount;
+        // G005: Cache storage variables - renamed to avoid name collision with function
+        uint256 maxTxValue = _maxTxAmount;
         
         // Only update if value is different to save gas (avoid Gsreset)
-        if (maxTxAmount != maxTx) {
+        if (maxTxValue != maxTx) {
             _maxTxAmount = maxTx;
             emit MaxTxAmountSet(maxTx);
         }
@@ -367,9 +381,6 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
     {
         if (to == address(0)) revert InvalidZeroAddress();
         
-        // Cache admin role
-        bytes32 adminRole = _ADMIN_ROLE;
-        
         emit LiquidityAddRequested(msg.sender, to, tokenAmountIn, msg.value);
 
         // G001: Cache address(this)
@@ -397,24 +408,33 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
     }
 
     // G003: This function is called multiple times, so should not be inlined
+    // We can't inline _beforeTokenTransfer since it's a hook function that needs to maintain the proper override
+    // Instead, we optimize its internal code to be as efficient as possible
     function _beforeTokenTransfer(address from, address to, uint256 amount)
         internal
-        virtual
+        
     {
         // Call parent implementation
-        _beforeTokenTransfer(from, to, amount);
+       _beforeTokenTransfer(from, to, amount);
         
         // Only apply checks if normal transfer
         if (from != address(0) && to != address(0) && amount != 0) {
-            // Cache admin role and contract address to save gas
+            // Cache all used storage variables upfront to minimize SLOADs
             bytes32 adminRole = _ADMIN_ROLE;
-            address self = address(this);
             address uniswapPair = _uniswapV2Pair;
+            bool isTradingEnabled = _tradingEnabled;
+            bool isSniperProtectionEnabled = _sniperProtectionEnabled;
+            bool isCooldownEnabled = _cooldownEnabled;
+            uint256 maxTxValue = _maxTxAmount;
+            uint256 launchTimestampValue = _launchTimestamp;
+            uint256 snipeTimeValue = _snipeTime;
+            uint256 cooldownTimeValue = _cooldownTime;
             
             // Cache user data to avoid multiple SLOADs
             UserData storage senderData = _userData[from];
             UserData storage recipientData = _userData[to];
 
+            // Blacklist checks
             if (senderData.blacklisted) {
                 emit TransferBlocked(from, to, "Sender blacklisted");
                 revert BlacklistedSender();
@@ -425,59 +445,45 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
                 revert BlacklistedRecipient();
             }
 
-            // G005: Cache storage variables
-            bool tradingActive = _tradingEnabled;
-            if (!tradingActive) {
+            // Trading enabled check
+            if (!isTradingEnabled) {
                 bool fromIsAdmin = hasRole(adminRole, from);
-                bool toIsAdmin   = hasRole(adminRole, to);
+                bool toIsAdmin = hasRole(adminRole, to);
                 if (!fromIsAdmin && !toIsAdmin) {
                     emit TransferBlocked(from, to, "Trading disabled");
                     revert TradingDisabled();
                 }
             }
 
-            // G005: Cache storage variables
-            uint256 localMaxTx = _maxTxAmount;
-            if (localMaxTx != 0 && amount > localMaxTx) {
-                emit MaxTxLimitReached(from, to, amount, localMaxTx);
+            // Max transaction amount check
+            if (maxTxValue != 0 && amount > maxTxValue) {
+                emit MaxTxLimitReached(from, to, amount, maxTxValue);
                 revert ExceedsMaxTx();
             }
 
-            // G005: Cache storage variables
-            bool sniperOn = _sniperProtectionEnabled;
-            uint256 launchTimestamp = _launchTimestamp;
-            uint256 snipeTime = _snipeTime;
-            
+            // Sniper protection check
             if (
-                sniperOn &&
-                tradingActive &&
-                launchTimestamp != 0 &&
-                // Use non-strict inequality for gas optimization (point 11)
-                block.timestamp <= (launchTimestamp + snipeTime)
+                isSniperProtectionEnabled &&
+                isTradingEnabled &&
+                launchTimestampValue != 0 &&
+                // Use non-strict inequality for gas optimization
+                block.timestamp <= (launchTimestampValue + snipeTimeValue)
             ) {
-                // "buy" from Uniswap pair
                 if (from == uniswapPair) {
-                    // Don't include timestamp in event (point 12)
                     emit SniperBlocked(from, to, 0);
                     revert SniperBuyBlocked();
                 }
             }
 
-            // G005: Cache storage variables
-            bool cooldownOn = _cooldownEnabled;
-            if (cooldownOn) {
-                bool fromIsAdmin_ = hasRole(adminRole, from);
-                bool toIsAdmin_   = hasRole(adminRole, to);
+            // Cooldown check
+            if (isCooldownEnabled) {
+                bool fromIsAdmin = hasRole(adminRole, from);
+                bool toIsAdmin = hasRole(adminRole, to);
 
-                // If neither side is admin and it's not a direct swap from/to Uniswap, enforce cooldown
-                if (!fromIsAdmin_ && !toIsAdmin_ && from != uniswapPair && to != uniswapPair) {
+                if (!fromIsAdmin && !toIsAdmin && from != uniswapPair && to != uniswapPair) {
                     uint256 lastTx = senderData.lastTx;
-                    // G005: Cache storage variables
-                    uint256 cooldownTime = _cooldownTime;
                     
-                    // Use non-strict inequality for gas optimization (point 11)
-                    if (block.timestamp <= (lastTx + cooldownTime)) {
-                        // Don't include redundant timestamps in events (point 12)
+                    if (block.timestamp <= (lastTx + cooldownTimeValue)) {
                         emit CooldownEnforced(from, 0, 0);
                         revert MustWaitCooldown();
                     }
@@ -486,14 +492,17 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
                 }
             }
         }
-        // Fixed infinite recursion bug - removed recursive call to _beforeTokenTransfer
     }
 
-    // Rescue functions - with nonReentrant as first modifier for better safety
+    // Custom error for insufficient token balance
+    error InsufficientTokenBalance();
+
+    // Rescue functions with explicit return values for consistency
     function rescueTokens(address tokenAddress, uint256 amount, address to)
         external
         nonReentrant
         onlyRole(_ADMIN_ROLE)
+        returns (bool success)
     {
         if (tokenAddress == address(0)) revert InvalidZeroAddress();
         if (to == address(0)) revert InvalidZeroAddress();
@@ -507,25 +516,27 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         // Get balance before transfer
         uint256 balance = token.balanceOf(self);
         
-        // Check if contract has enough tokens
-        // G010: Replace require with custom error
-        if (balance < amount) revert("Insufficient token balance");
+        // Check if contract has enough tokens - use custom error instead of string
+        if (balance < amount) revert InsufficientTokenBalance();
         
         // Use safeTransfer from SafeERC20 to handle various edge cases
         token.safeTransfer(to, amount);
         
+        // Emit both events for better tracking
         emit TokensRescued(tokenAddress, amount, to);
-        
-        // Additional event to log the rescue details
         emit TokenRescueCompleted(tokenAddress, self, to, amount);
+        
+        success = true;
+        return success;
     }
     
 
     function rescueETH(address payable to, uint256 amount)
         external
-        payable // Added payable keyword
+        payable
         nonReentrant
         onlyRole(_ADMIN_ROLE)
+        returns (bool success)
     {
         if (to == address(0)) revert InvalidZeroAddress();
         
@@ -534,17 +545,19 @@ contract WallyToken is ERC20, AccessControl, ReentrancyGuard {
         uint256 balance = self.balance;
         
         // Ensure contract has enough ETH
-        // G010: Replace require with custom error
         if (balance < amount) revert InsufficientBalance();
         
         // Using low-level call for ETH transfer
-        (bool success, ) = to.call{value: amount}("");
+        (bool transferred, ) = to.call{value: amount}("");
         
         // Must check if transfer was successful
-        if (!success) revert ETHTransferFailed();
+        if (!transferred) revert ETHTransferFailed();
         
-        // No need to add block.timestamp to events - it's included by default
+        // Emit event for tracking
         emit TokensRescued(address(0), amount, to);
+        
+        success = true;
+        return success;
     }
 
     receive() external payable {
